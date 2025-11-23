@@ -306,9 +306,34 @@ mkdir /etc/containerd && containerd config default > /etc/containerd/config.toml
 sandbox_image=“registry.aliyuncs.com/google_containers/pause:3.9" 由3.8修改为3.9
 ~~~
 
+```
+mkdir -p /etc/containerd/certs.d/docker.io  && cat > /etc/containerd/certs.d/docker.io/hosts.toml << EOF
+server = "https://docker.io"
+[host."https://docker.1ms.run"]
+  capabilities = ["pull", "resolve"]
+EOF
 
 
+mkdir -p /etc/containerd/certs.d/registry.k8s.io  && cat > /etc/containerd/certs.d/registry.k8s.io/hosts.toml << EOF
+server = "https://registry.k8s.io"
+[host."https://swr.cn-north-4.myhuaweicloud.com/ddn-k8s/registry.k8s.io"]
+  capabilities = ["pull", "resolve"]
 
+[host."https://k8s.m.daocloud.io"]
+  capabilities = ["pull", "resolve"]
+  
+[host."https://registry.cn-hangzhou.aliyuncs.com/google_containers"]
+  capabilities = ["pull", "resolve"]
+EOF
+
+
+```
+
+```
+systemctl daemon-reload
+systemctl restart containerd
+systemctl status containerd
+```
 
 
 
@@ -348,6 +373,40 @@ tar Cxzvf /opt/cni/bin cni-plugins-linux-amd64-v1.1.1.tgz
 
 
 
+### 安装配置nerdctl
+
+```
+# 下载
+wget https://github.com/containerd/nerdctl/releases/download/v1.5.0/nerdctl-1.5.0-linux-amd64.tar.gz
+# 解压
+tar Cxzvf /usr/local/bin nerdctl-1.5.0-linux-amd64.tar.gz 
+# 配置 nerdctl 参数自动补齐
+echo 'source <(nerdctl completion bash)' >> /etc/profile
+source /etc/profile
+# 验证
+nerdctl -v
+```
+
+```
+# 下载
+wget https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.33.0/crictl-v1.33.0-linux-amd64.tar.gz
+# 解压
+kk
+# 配置
+cat > /etc/crictl.yaml << EOF
+runtime-endpoint: "unix:///run/containerd/containerd.sock"
+image-endpoint: "unix:///run/containerd/containerd.sock"
+timeout: 0
+debug: false
+pull-image-on-create: false
+disable-pull-on-run: false
+EOF
+# 验证
+crictl version
+```
+
+
+
 # 三、K8S集群部署
 
 ## 3.1 K8S集群软件YUM源准备
@@ -355,9 +414,9 @@ tar Cxzvf /opt/cni/bin cni-plugins-linux-amd64-v1.1.1.tgz
 ### 3.1.1 google提供YUM源
 
 ~~~powershell
-# cat > /etc/yum.repos.d/k8s.repo <<EOF
-[kubernetes]
-name=Kubernetes
+cat > /etc/yum.repos.d/google.k8s.repo <<EOF
+[google_kubernetes]
+name=Google_Kubernetes
 baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
 enabled=1
 gpgcheck=1
@@ -372,7 +431,7 @@ EOF
 ### 3.1.2 阿里云提供YUM源
 
 ~~~powershell
-# cat > /etc/yum.repos.d/k8s.repo <<EOF
+cat > /etc/yum.repos.d/k8s.repo <<EOF
 [kubernetes]
 name=Kubernetes
 baseurl=https://mirrors.aliyun.com/kubernetes/yum/repos/kubernetes-el7-x86_64/
@@ -383,7 +442,60 @@ gpgkey=https://mirrors.aliyun.com/kubernetes/yum/doc/yum-key.gpg https://mirrors
 EOF
 ~~~
 
+1.28后使用新版https://developer.aliyun.com/mirror/kubernetes/
 
+```
+cat > /etc/yum.repos.d/ali.k8s.repo <<EOF
+[ali_kubernetes]
+name=Ali_Kubernetes
+baseurl=https://mirrors.aliyun.com/kubernetes-new/core/stable/v1.33/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://mirrors.aliyun.com/kubernetes-new/core/stable/v1.33/rpm/repodata/repomd.xml.key
+exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
+EOF
+```
+
+
+
+3.1.2 官方提供YUM源
+
+```
+cat > /etc/yum.repos.d/k8s.repo <<EOF
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v1.33/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v1.33/rpm/repodata/repomd.xml.key
+exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
+EOF
+```
+
+```
+RELEASE="v1.33.6"
+ARCH="amd64"
+DOWNLOAD_DIR="/usr/local/bin"
+cd $DOWNLOAD_DIR
+sudo curl -L --remote-name-all https://dl.k8s.io/release/${RELEASE}/bin/linux/${ARCH}/{kubeadm,kubelet}
+sudo chmod +x {kubeadm,kubelet}
+
+RELEASE_VERSION="v0.16.2"
+curl -sSL "https://raw.githubusercontent.com/kubernetes/release/${RELEASE_VERSION}/cmd/krel/templates/latest/kubelet/kubelet.service" | sed "s:/usr/bin:${DOWNLOAD_DIR}:g" | sudo tee /usr/lib/systemd/system/kubelet.service
+sudo mkdir -p /usr/lib/systemd/system/kubelet.service.d
+curl -sSL "https://raw.githubusercontent.com/kubernetes/release/${RELEASE_VERSION}/cmd/krel/templates/latest/kubeadm/10-kubeadm.conf" | sed "s:/usr/bin:${DOWNLOAD_DIR}:g" | sudo tee /usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf
+
+cd 
+curl -LO "https://dl.k8s.io/release/${RELEASE}/bin/linux/${ARCH}/kubectl"
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+sudo systemctl enable --now kubelet
+sudo systemctl status kubelet
+kubeadm version
+kubelet --version
+kubectl version
+
+```
 
 
 
@@ -397,6 +509,10 @@ EOF
 默认安装
 # yum -y install  kubeadm  kubelet kubectl
 ~~~
+
+```
+dnf install -y --nogpgcheck kubelet kubeadm kubectl
+```
 
 
 
@@ -429,6 +545,11 @@ EOF
 KUBELET_EXTRA_ARGS="--cgroup-driver=systemd"
 ~~~
 
+```
+echo "source <(kubectl completion bash)" >> ~/.bash_profile 
+source ~/.bash_profile 
+```
+
 
 
 ~~~powershell
@@ -438,89 +559,302 @@ KUBELET_EXTRA_ARGS="--cgroup-driver=systemd"
 
 
 
+KUBE_VIP
+
+```
+mkdir -p /etc/kubernetes/manifests
+export VIP=192.168.88.188
+export INTERFACE=ens33
+KVVERSION=v1.0.2
+```
+
+```
+alias kube-vip="ctr image pull ghcr.io/kube-vip/kube-vip:$KVVERSION; ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:$KVVERSION vip /kube-vip"
+```
+
+```
+kube-vip manifest pod \
+    --interface $INTERFACE \
+    --address $VIP \
+    --controlplane \
+    --services \
+    --arp \
+    --leaderElection | tee /etc/kubernetes/manifests/kube-vip.yaml
+```
+
+```
+sed -i 's#path: /etc/kubernetes/admin.conf#path: /etc/kubernetes/super-admin.conf#' \
+          /etc/kubernetes/manifests/kube-vip.yaml
+```
+
+
+
 ## 3.3 K8S集群初始化
 
+```
+kubeadm config print init-defaults > kubeadm-conf.yaml
+```
+
+```
+# kubeadm v1.33.6 生产级 init 配置示例
+# 使用 apiVersion: kubeadm.k8s.io/v1beta4（适用于 v1.33.x 的 kubeadm 配置格式）
+# 如果你使用不同的 kubeadm 版本，请先确认支持的 apiVersion。
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+# ---------------------------------------------------------------------------
+# InitConfiguration 主要包含运行时相关（bootstrap token, localAPIEndpoint 等）
+# ---------------------------------------------------------------------------
+bootstrapTokens:
+- groups:
+  - system:bootstrappers:kubeadm:default-node-token
+  token: "012345.6789abcdef0123456789abcdef"   # 示例 token，生产建议使用随机并短期有效的 token，或使用 --certificate-key join
+  ttl: "24h"                                  # token 有效期，加入节点之后可撤销
+  usages:
+  - signing
+  - authentication
+  description: "bootstrap token for worker/controlplane join"
+localAPIEndpoint:
+  advertiseAddress: 192.168.88.181
+  bindPort: 6443                   # API server 监听端口（默认 6443）
+nodeRegistration:
+  name: "k8s-node-1"                # 节点主机名（默认取系统 hostname）
+  criSocket: unix:///var/run/containerd/containerd.sock   # CRI socket
+  imagePullPolicy: IfNotPresent
+  imagePullSerial: true
+  taints: null
+
+timeouts:
+  controlPlaneComponentHealthCheck: 4m0s
+  discovery: 5m0s
+  etcdAPICall: 2m0s
+  kubeletHealthCheck: 4m0s
+  kubernetesAPICall: 1m0s
+  tlsBootstrap: 5m0s
+  upgradeManifests: 5m0s
+
+---
+# ---------------------------------------------------------------------------
+# ClusterConfiguration：集群级别的核心配置（网络、证书、API server args 等）
+# ---------------------------------------------------------------------------
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v1.33.6                    # 指定 Kubernetes 版本（与 kubeadm 兼容）
+imageRepository:  registry.aliyuncs.com/google_containers
+               # 可替换为你公司的镜像加速仓库（比如 my.repo.local/registry.k8s.io）
+# 如需离线安装或私有仓库，请确保在所有节点把镜像拉取到本地 registry 或配置 imagePullSecrets。
+
+controlPlaneEndpoint: "192.168.88.181:6443"   # 推荐填 LB 或 VIP（若单节点可填节点IP:6443）
+# controlPlaneEndpoint 会写入 kubeadm-config ConfigMap，便于 join 时自动使用。
+
+networking:
+  dnsDomain: "cluster.local"
+  serviceSubnet: "10.96.0.0/12"    # Service 网段（与 CNI 要求一致）
+  podSubnet: "10.10.0.0/16"      # Pod 网段：选择与所用 CNI 插件兼容的网段（flannel 默认 10.244.0.0/16）
+  # 生产建议：根据集群规模规划 podSubnet（避免与物理网段冲突）
+
+apiServer: {}
+  extraArgs:
+    # 常见的生产级参数，可按需开启/调整
+    authorization-mode: Node,RBAC
+    audit-log-path: "/var/log/kubernetes/audit.log"
+    audit-log-maxage: "30"
+    audit-log-maxbackup: "10"
+    audit-log-maxsize: "100"
+    # 如果使用私有证书或特殊特性可在这里添加 extraArgs
+  certSANs:
+  - 127.0.0.1
+  - k8s-node-1
+  - k8s-node-2
+  - k8s-node-3
+  - 192.168.88.181
+  - 192.168.88.182
+  - 192.168.88.183
+  - 192.168.88.188
+
+controllerManager: {}
+scheduler: {}
+
+etcd:
+  # 默认使用本地堆栈式 etcd（适合小到中型集群）。生产中大型建议使用独立外部 etcd 集群（参见下面 external etcd 注释）。
+  local:
+    # 数据目录（etcd static pod 会使用）
+    dataDir: "/var/lib/etcd"
 
 
-~~~powershell
-[root@k8s-node-1 ~]# kubeadm init --kubernetes-version=v1.28.0 --pod-network-cidr=10.244.0.0/16 --apiserver-advertise-address=192.168.88.181  --cri-socket unix:///var/run/containerd/containerd.sock
-~~~
+caCertificateValidityPeriod: 876000h0m0s
+certificateValidityPeriod: 8760h0m0s
+certificatesDir: /etc/kubernetes/pki
+clusterName: kubernetes-test
+encryptionAlgorithm: RSA-2048
+
+---
+# 指定kube-proxy基于ipvs模式
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: ipvs
+
+---
+# ---------------------------------------------------------------------------
+# KubeletConfiguration：以 kubelet.config.k8s.io API 编写（示例常用项）
+# 注意：kubeadm 会把此配置写入 /var/lib/kubelet/config.yaml（kubelet 使用）
+# ---------------------------------------------------------------------------
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+# 与 kubeadm 的 nodeRegistration.kubeletExtraArgs 保持一致（优先级请参考 kubeadm 文档）
+cgroupDriver: "systemd"         # production 推荐 systemd（如果 runtime 使用 systemd）
+failSwapOn: true                # 生产环境请关闭 swap，kubelet 默认要求 swap off
+readOnlyPort: 0
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    cacheTTL: 0s
+    enabled: true
+  x509:
+    clientCAFile: "/etc/kubernetes/pki/ca.crt"
+authorization:
+  mode: "Webhook"               # 使用 RBAC/认证 webhook，生产环境常用
+  webhook:
+    cacheAuthorizedTTL: 0s
+    cacheUnauthorizedTTL: 0s
+metricsBindAddress: "127.0.0.1" # 若需要远程抓取请配置合适的地址并做访问控制
+clusterDNS:
+- 10.96.0.10
+
+# ----------------------------------------------------------------------------
+# Addons & post-install 提示（不是 kubeadm 字段，仅为文档说明）
+# ----------------------------------------------------------------------------
+# - 在 kubeadm init 完成并且 kubectl 可用后，请安装 CNI（例如 Calico、Cilium、Flannel 等）
+#   确保 CNI 与上面配置的 podSubnet 兼容。
+# - 建议启用网络策略（如 Calico NetworkPolicy）和集群级别监控、日志、证书轮转工具等。
+# - 建议配置 PodSecurityAdmission/OPA/Gatekeeper 等策略控制。
+# ----------------------------------------------------------------------------
+
+```
+
+```
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+bootstrapTokens:
+- groups:
+  - system:bootstrappers:kubeadm:default-node-token
+  token: "012345.6789abcdef012345"
+  ttl: "24h"
+  usages:
+  - signing
+  - authentication
+  description: "bootstrap token for worker/controlplane join"
+localAPIEndpoint:
+  advertiseAddress: 192.168.88.181
+  bindPort: 6443
+nodeRegistration:
+  name: "k8s-node-1"
+  criSocket: unix:///var/run/containerd/containerd.sock
+  imagePullPolicy: IfNotPresent
+  imagePullSerial: true
+  taints: null
+timeouts:
+  controlPlaneComponentHealthCheck: 4m0s
+  discovery: 5m0s
+  etcdAPICall: 2m0s
+  kubeletHealthCheck: 4m0s
+  kubernetesAPICall: 1m0s
+  tlsBootstrap: 5m0s
+  upgradeManifests: 5m0s
+
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+kubernetesVersion: v1.33.6                    # 指定 Kubernetes 版本（与 kubeadm 兼容）
+imageRepository:  registry.aliyuncs.com/google_containers
+
+controlPlaneEndpoint: "192.168.88.181:6443"
+networking:
+  dnsDomain: "cluster.local"
+  serviceSubnet: "10.96.0.0/12"
+  podSubnet: "10.10.0.0/16"
+
+apiServer:
+  extraArgs:
+    - name: "authorization-mode"
+      value: "Node,RBAC"
+  certSANs:
+  - 127.0.0.1
+  - k8s-node-1
+  - k8s-node-2
+  - k8s-node-3
+  - 192.168.88.181
+  - 192.168.88.182
+  - 192.168.88.183
+  - 192.168.88.188
+controllerManager: {}
+scheduler: {}
+etcd:
+  local:
+    dataDir: "/var/lib/etcd"
+caCertificateValidityPeriod: 87600h0m0s
+certificateValidityPeriod: 8760h0m0s
+certificatesDir: /etc/kubernetes/pki
+clusterName: kubernetes-test
+encryptionAlgorithm: RSA-2048
+
+---
+# 指定kube-proxy基于ipvs模式
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: ipvs
+
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: "systemd"
+failSwapOn: true
+readOnlyPort: 0
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    cacheTTL: 0s
+    enabled: true
+  x509:
+    clientCAFile: "/etc/kubernetes/pki/ca.crt"
+authorization:
+  mode: "Webhook"
+  webhook:
+    cacheAuthorizedTTL: 0s
+    cacheUnauthorizedTTL: 0s
+clusterDNS:
+- 10.96.0.10
+
+```
+
+```
+kubeadm config images pull --config kubeadm-conf.yaml
+```
+
+```
+# 查看 containerd 运行状态
+ctr -n k8s.io images list
+
+```
+
+集群初始化
+
+```
+kubeadm init --upload-certs --config=kubeadm-conf.yaml
+```
 
 
 
-~~~powershell
-[init] Using Kubernetes version: v1.28.0
-[preflight] Running pre-flight checks
-[preflight] Pulling images required for setting up a Kubernetes cluster
-[preflight] This might take a minute or two, depending on the speed of your internet connection
-[preflight] You can also perform this action in beforehand using 'kubeadm config images pull'
-[certs] Using certificateDir folder "/etc/kubernetes/pki"
-[certs] Generating "ca" certificate and key
-[certs] Generating "apiserver" certificate and key
-[certs] apiserver serving cert is signed for DNS names [k8s-node-1 kubernetes kubernetes.default kubernetes.default.svc kubernetes.default.svc.cluster.local] and IPs [10.96.0.1 192.168.88.181]
-[certs] Generating "apiserver-kubelet-client" certificate and key
-[certs] Generating "front-proxy-ca" certificate and key
-[certs] Generating "front-proxy-client" certificate and key
-[certs] Generating "etcd/ca" certificate and key
-[certs] Generating "etcd/server" certificate and key
-[certs] etcd/server serving cert is signed for DNS names [k8s-node-1 localhost] and IPs [192.168.88.181 127.0.0.1 ::1]
-[certs] Generating "etcd/peer" certificate and key
-[certs] etcd/peer serving cert is signed for DNS names [k8s-node-1 localhost] and IPs [192.168.88.181 127.0.0.1 ::1]
-[certs] Generating "etcd/healthcheck-client" certificate and key
-[certs] Generating "apiserver-etcd-client" certificate and key
-[certs] Generating "sa" key and public key
-[kubeconfig] Using kubeconfig folder "/etc/kubernetes"
-[kubeconfig] Writing "admin.conf" kubeconfig file
-[kubeconfig] Writing "kubelet.conf" kubeconfig file
-[kubeconfig] Writing "controller-manager.conf" kubeconfig file
-[kubeconfig] Writing "scheduler.conf" kubeconfig file
-[kubelet-start] Writing kubelet environment file with flags to file "/var/lib/kubelet/kubeadm-flags.env"
-[kubelet-start] Writing kubelet configuration to file "/var/lib/kubelet/config.yaml"
-[kubelet-start] Starting the kubelet
-[control-plane] Using manifest folder "/etc/kubernetes/manifests"
-[control-plane] Creating static Pod manifest for "kube-apiserver"
-[control-plane] Creating static Pod manifest for "kube-controller-manager"
-[control-plane] Creating static Pod manifest for "kube-scheduler"
-[etcd] Creating static Pod manifest for local etcd in "/etc/kubernetes/manifests"
-[wait-control-plane] Waiting for the kubelet to boot up the control plane as static Pods from directory "/etc/kubernetes/manifests". This can take up to 4m0s
-[apiclient] All control plane components are healthy after 20.502191 seconds
-[upload-config] Storing the configuration used in ConfigMap "kubeadm-config" in the "kube-system" Namespace
-[kubelet] Creating a ConfigMap "kubelet-config" in namespace kube-system with the configuration for the kubelets in the cluster
-[upload-certs] Skipping phase. Please see --upload-certs
-[mark-control-plane] Marking the node k8s-node-1 as control-plane by adding the labels: [node-role.kubernetes.io/control-plane node.kubernetes.io/exclude-from-external-load-balancers]
-[mark-control-plane] Marking the node k8s-node-1 as control-plane by adding the taints [node-role.kubernetes.io/control-plane:NoSchedule]
-[bootstrap-token] Using token: hd74hg.r8l1pe4tivwyjz73
-[bootstrap-token] Configuring bootstrap tokens, cluster-info ConfigMap, RBAC Roles
-[bootstrap-token] Configured RBAC rules to allow Node Bootstrap tokens to get nodes
-[bootstrap-token] Configured RBAC rules to allow Node Bootstrap tokens to post CSRs in order for nodes to get long term certificate credentials
-[bootstrap-token] Configured RBAC rules to allow the csrapprover controller automatically approve CSRs from a Node Bootstrap Token
-[bootstrap-token] Configured RBAC rules to allow certificate rotation for all node client certificates in the cluster
-[bootstrap-token] Creating the "cluster-info" ConfigMap in the "kube-public" namespace
-[kubelet-finalize] Updating "/etc/kubernetes/kubelet.conf" to point to a rotatable kubelet client certificate and key
-[addons] Applied essential addon: CoreDNS
-[addons] Applied essential addon: kube-proxy
+如果配置问题导致集群初始化失败，可重置集群再次初始化：
 
-Your Kubernetes control-plane has initialized successfully!
+```
+kubeadm reset
+ipvsadm --clear
+rm -rf $HOME/.kube/config
+```
 
-To start using your cluster, you need to run the following as a regular user:
 
-  mkdir -p $HOME/.kube
-  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-  sudo chown $(id -u):$(id -g) $HOME/.kube/config
-
-Alternatively, if you are the root user, you can run:
-
-  export KUBECONFIG=/etc/kubernetes/admin.conf
-
-You should now deploy a pod network to the cluster.
-Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
-  https://kubernetes.io/docs/concepts/cluster-administration/addons/
-
-Then you can join any number of worker nodes by running the following on each as root:
-
-kubeadm join 192.168.88.181:6443 --token hd74hg.r8l1pe4tivwyjz73 \
-        --discovery-token-ca-cert-hash sha256:29a00daed8d96dfa8e913ab4c0a8c4037f1c253a20742ca8913932dd7c8b3bd1
-~~~
 
 
 
@@ -539,6 +873,18 @@ kubeadm join 192.168.88.181:6443 --token hd74hg.r8l1pe4tivwyjz73 \
 [root@k8s-node-3 ~]# kubeadm join 192.168.88.181:6443 --token hd74hg.r8l1pe4tivwyjz73 \
 >         --discovery-token-ca-cert-hash sha256:29a00daed8d96dfa8e913ab4c0a8c4037f1c253a20742ca8913932dd7c8b3bd1 --cri-socket unix:///var/run/containerd/containerd.sock
 ~~~
+
+```
+[root@master1 ~]# mkdir -p $HOME/.kube 
+[root@master1 ~]# cp -i /etc/kubernetes/admin.conf $HOME/.kube/config 
+[root@master1 ~]# chown $(id -u):$(id -g) $HOME/.kube/config
+[root@master1 ~]# echo "export KUBECONFIG=/etc/kubernetes/admin.conf" >> ~/.bash_profile
+[root@tiaoban ~]# source ~/.bash_profile
+```
+
+```
+sed -i 's#path: /etc/kubernetes/super-admin.conf#path: /etc/kubernetes/admin.conf#'   \ /etc/kubernetes/manifests/kube-vip.yaml
+```
 
 
 
