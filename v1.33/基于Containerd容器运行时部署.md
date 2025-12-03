@@ -6,7 +6,7 @@
 
 | 序号 | 操作系统及版本 | 备注 |
 | :--: | :------------: | :--: |
-|  1   |    Rocky9.6    |      |
+|  1   |   Rocky10.1    |      |
 
 
 
@@ -101,7 +101,8 @@ node-2/3 客户端配置
 
 ```
 cat >> /etc/chrony.conf << EOF
-server 192.168.88.181  # node-1 IP
+# node-1 IP
+server 192.168.88.181  iburst
 EOF
 
 systemctl restart chronyd
@@ -140,8 +141,11 @@ modprobe br_netfilter && modprobe overlay
 # 查看是否加载
 lsmod | grep -E "br_netfilter|overlay"
 
-#  br_netfilter           22256  0
-#  bridge                151336  1 br_netfilter
+
+# overlay               245760  0
+# br_netfilter           36864  0
+# bridge                417792  1 br_netfilter
+
 ~~~
 
 ### 1.3.9 安装ipset及ipvsadm
@@ -277,7 +281,7 @@ wget https://github.com/containernetworking/plugins/releases
 ```
 
 ```bash
-mkdir -p /opt/cni/bin && tar Cxzvf /opt/cni/bin cni-plugins-linux-amd64-v1.1.1.tgz
+mkdir -p /opt/cni/bin && tar Cxzvf /opt/cni/bin cni-plugins-linux-amd64-v1.8.0.tgz
 ```
 
 
@@ -301,9 +305,9 @@ nerdctl -v
 
 ```bash
 # 下载
-wget https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.33.0/crictl-v1.33.0-linux-amd64.tar.gz
+wget https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.34.0/crictl-v1.33.0-linux-amd64.tar.gz
 # 解压
-tar Czxvf /usr/local/bin crictl-v1.33.0-linux-amd64.tar.gz
+tar Czxvf /usr/local/bin crictl-v1.34.0-linux-amd64.tar.gz
 # 配置
 cat > /etc/crictl.yaml << EOF
 runtime-endpoint: "unix:///run/containerd/containerd.sock"
@@ -388,12 +392,13 @@ EOF
 RELEASE="v1.33.6"
 ARCH="amd64"
 DOWNLOAD_DIR="/usr/local/bin"
+RELEASE_VERSION="v0.16.2"
 
 cd $DOWNLOAD_DIR
 sudo curl -L --remote-name-all https://dl.k8s.io/release/${RELEASE}/bin/linux/${ARCH}/{kubeadm,kubelet}
 sudo chmod +x {kubeadm,kubelet}
 
-RELEASE_VERSION="v0.16.2"
+
 curl -sSL "https://raw.githubusercontent.com/kubernetes/release/${RELEASE_VERSION}/cmd/krel/templates/latest/kubelet/kubelet.service" | sed "s:/usr/bin:${DOWNLOAD_DIR}:g" | sudo tee /usr/lib/systemd/system/kubelet.service
 sudo mkdir -p /usr/lib/systemd/system/kubelet.service.d
 curl -sSL "https://raw.githubusercontent.com/kubernetes/release/${RELEASE_VERSION}/cmd/krel/templates/latest/kubeadm/10-kubeadm.conf" | sed "s:/usr/bin:${DOWNLOAD_DIR}:g" | sudo tee /usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf
@@ -457,21 +462,24 @@ kind: InitConfiguration
 bootstrapTokens:
 - groups:
   - system:bootstrappers:kubeadm:default-node-token
-  token: "012345.6789abcdef012345"
+  token: "9a08jv.c0izixklcxtmnze7"
+  description: "kubeadm bootstrap token"
   ttl: "24h"
   usages:
-  - signing
   - authentication
-  description: "bootstrap token for worker/controlplane join"
-localAPIEndpoint:
-  advertiseAddress: 192.168.88.181
-  bindPort: 6443
+  - signing
+
 nodeRegistration:
   name: "k8s-node-1"
-  criSocket: unix:///var/run/containerd/containerd.sock
-  imagePullPolicy: IfNotPresent
-  imagePullSerial: true
+  criSocket: "unix:///var/run/containerd/containerd.sock"
   taints: null
+  imagePullPolicy: "IfNotPresent"
+  imagePullSerial: true
+
+localAPIEndpoint:
+  advertiseAddress: "192.168.88.181"
+  bindPort: 6443
+
 timeouts:
   controlPlaneComponentHealthCheck: 4m0s
   discovery: 5m0s
@@ -480,70 +488,47 @@ timeouts:
   kubernetesAPICall: 1m0s
   tlsBootstrap: 5m0s
   upgradeManifests: 5m0s
-
 ---
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration
-kubernetesVersion: v1.33.6                    # 指定 Kubernetes 版本（与 kubeadm 兼容）
-imageRepository:  registry.aliyuncs.com/google_containers
-
-controlPlaneEndpoint: "192.168.88.181:6443"
-networking:
-  dnsDomain: "cluster.local"
-  serviceSubnet: "10.96.0.0/12"
-  podSubnet: "10.10.0.0/16"
-
-apiServer:
-  extraArgs:
-    - name: "authorization-mode"
-      value: "Node,RBAC"
-  certSANs:
-  - 127.0.0.1
-  - k8s-node-1
-  - k8s-node-2
-  - k8s-node-3
-  - 192.168.88.181
-  - 192.168.88.182
-  - 192.168.88.183
-  - 192.168.88.188
-controllerManager: {}
-scheduler: {}
 etcd:
   local:
     dataDir: "/var/lib/etcd"
+
+networking:
+  serviceSubnet: "10.96.0.0/16"
+  podSubnet: "10.10.0.0/24"
+  dnsDomain: "cluster.local"
+kubernetesVersion: "v1.33.6"
+controlPlaneEndpoint: "192.168.88.188:6443"
+apiServer:
+  extraArgs:
+    - name: authorization-mode
+      value: Node,RBAC
+
+controllerManager: {}
+scheduler: {}
+
+certificatesDir: "/etc/kubernetes/pki"
 caCertificateValidityPeriod: 87600h0m0s
 certificateValidityPeriod: 8760h0m0s
-certificatesDir: /etc/kubernetes/pki
-clusterName: kubernetes-test
+imageRepository: "registry.aliyuncs.com/google_containers"
+clusterName: "test-cluster"
 encryptionAlgorithm: RSA-2048
-
----
-# 指定kube-proxy基于ipvs模式
-apiVersion: kubeproxy.config.k8s.io/v1alpha1
-kind: KubeProxyConfiguration
-mode: ipvs
+dns:
+  disabled: true  # disable CoreDNS
+proxy:
+  disabled: true   # disable kube-proxy
 
 ---
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
-cgroupDriver: "systemd"
-failSwapOn: true
-readOnlyPort: 0
-authentication:
-  anonymous:
-    enabled: false
-  webhook:
-    cacheTTL: 0s
-    enabled: true
-  x509:
-    clientCAFile: "/etc/kubernetes/pki/ca.crt"
-authorization:
-  mode: "Webhook"
-  webhook:
-    cacheAuthorizedTTL: 0s
-    cacheUnauthorizedTTL: 0s
-clusterDNS:
-- 10.96.0.10
+# kubelet specific options here
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: "iptables"
+
 ```
 
 ```bash
@@ -594,7 +579,7 @@ source ~/.bash_profile
 ```
 
 ```bash
-sed -i 's#path: /etc/kubernetes/super-admin.conf#path: /etc/kubernetes/admin.conf#'   \ /etc/kubernetes/manifests/kube-vip.yaml
+sed -i 's#path: /etc/kubernetes/super-admin.conf#path: /etc/kubernetes/admin.conf#'  /etc/kubernetes/manifests/kube-vip.yaml
 ```
 
 
@@ -615,15 +600,12 @@ k8s-node-3   Ready    <none>          13m   v1.28.0
 
 > calico访问链接：https://projectcalico.docs.tigera.io/about/about-calico
 
-
-
-![image-20230404115348450](基于Containerd容器运行时部署K8S 1.28集群.assets/image-20230404115348450.png)
-
-
-
-![image-20230404115500987](基于Containerd容器运行时部署K8S 1.28集群.assets/image-20230404115500987.png)
-
-
+```bash
+cat > /etc/NetworkManager/conf.d/calico.conf <<EOF
+[keyfile]
+unmanaged-devices=interface-name:cali*;interface-name:tunl*;interface-name:vxlan.calico;interface-name:vxlan-v6.calico;interface-name:wireguard.cali;interface-name:wg-v6.cali
+EOF
+```
 
 
 
@@ -631,77 +613,130 @@ k8s-node-3   Ready    <none>          13m   v1.28.0
 # kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/tigera-operator.yaml
 ~~~
 
-
+  
 
 ~~~powershell
 # wget https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/custom-resources.yaml
 ~~~
 
+```bash
+mkdir /root/calico && cd  /root/calico
+wget https://raw.githubusercontent.com/projectcalico/calico/v3.31.2/manifests/operator-crds.yaml
+wget https://raw.githubusercontent.com/projectcalico/calico/v3.31.2/manifests/tigera-operator.yaml
+curl -O https://raw.githubusercontent.com/projectcalico/calico/v3.31.2/manifests/custom-resources-bpf.yaml
+# 修改为 kubeadm config 中 podsubnetwotk
+sed -i 's/cidr: 192\.168\.0\.0\/16/cidr: 10.10.0.0\/16/' custom-resources-bpf.yaml
 
 
-~~~powershell
-# vim custom-resources.yaml
+kubectl create -f operator-crds.yaml
+kubectl create -f tigera-operator.yaml
+kubectl create -f custom-resources-bpf.yaml
+
+watch kubectl get tigerastatus
+```
+
+```
+# 确认启用bpf
+kubectl logs -n calico-system -l k8s-app=calico-node | grep BPF
+```
 
 
-# cat custom-resources.yaml
 
 
-# This section includes base Calico installation configuration.
-# For more information, see: https://projectcalico.docs.tigera.io/master/reference/installation/api#operator.tigera.io/v1.Installation
-apiVersion: operator.tigera.io/v1
-kind: Installation
-metadata:
-  name: default
-spec:
-  # Configures Calico networking.
-  calicoNetwork:
-    # Note: The ipPools section cannot be modified post-install.
-    ipPools:
-    - blockSize: 26
-      cidr: 10.244.0.0/16 修改此行内容为初始化时定义的pod network cidr
-      encapsulation: VXLANCrossSubnet
-      natOutgoing: Enabled
-      nodeSelector: all()
-
----
-
-# This section configures the Calico API server.
-# For more information, see: https://projectcalico.docs.tigera.io/master/reference/installation/api#operator.tigera.io/v1.APIServer
-apiVersion: operator.tigera.io/v1
-kind: APIServer
-metadata:
-  name: default
-spec: {}
-~~~
 
 
+
+> 
+>
+> 安装calicoctl
 
 ~~~powershell
-# kubectl create -f custom-resources.yaml
-
-installation.operator.tigera.io/default created
-apiserver.operator.tigera.io/default created
+curl -L https://github.com/projectcalico/calico/releases/download/v3.31.2/calicoctl-linux-amd64 -o calicoctl
+chmod +x ./calicoctl && cp  ./calicoctl /usr/local/bin
 ~~~
 
-
-
-~~~powershell
-[root@k8s-node-1 ~]# kubectl get pods -n calico-system
-NAME                                       READY   STATUS    RESTARTS   AGE
-calico-kube-controllers-6bb86c78b4-cnr9l   1/1     Running   0          2m26s
-calico-node-86cs9                          1/1     Running   0          2m26s
-calico-node-gjgcc                          1/1     Running   0          2m26s
-calico-node-hlr69                          1/1     Running   0          2m26s
-calico-typha-6f877c9d8f-8f5fb              1/1     Running   0          2m25s
-calico-typha-6f877c9d8f-spxqf              1/1     Running   0          2m26s
-csi-node-driver-9b8nd                      2/2     Running   0          2m26s
-csi-node-driver-rg6dc                      2/2     Running   0          2m26s
-csi-node-driver-tf82w                      2/2     Running   0          2m26s
-~~~
+```bash
+calicoctl node diags
+```
 
 
 
 
+
+```
+Calico + eBPF 模式有一个 已知限制：
+
+不支持直接从 kube-proxy 的 IPVS 模式切换到 eBPF 模式。
+
+如果之前 kube-proxy 是 IPVS 模式，直接开启 eBPF，会导致：
+
+calico-node readiness probe 报 503calico-node 就绪探测报告 503
+
+BIRD 或 Felix 无法完全初始化
+
+ippools 状态显示 False
+
+tigera-operator 报 DEGRADED 或 PROGRESSING
+
+原因是 eBPF 数据平面和 IPVS 模式存在冲突，Calico 官方文档明确说明：要使用 eBPF，必须先让 kube-proxy 切换到 iptables 模式，然后再启用 eBPF。
+
+🔧 解决方案概览
+
+切换 kube-proxy 到 iptables 模式
+
+修改 kube-proxy ConfigMap：
+
+kubectl -n kube-system edit configmap kube-proxy
+
+
+将 mode: ipvs 改为 mode: iptables，保存退出。
+
+然后重启 kube-proxy DaemonSet：
+
+kubectl -n kube-system delete pod -l k8s-app=kube-proxy
+
+
+确认 kube-proxy 已切换成功
+
+检查 Pod 是否重建，并查看日志：
+
+kubectl get pods -n kube-system -o wide | grep kube-proxy
+kubectl logs -n kube-system <kube-proxy-pod>
+
+
+mode: iptables 确认生效。
+
+重新部署 Calico eBPF
+
+现在再开启 bpfEnabled: true（如果你想继续用 eBPF）：
+
+kubectl patch felixconfiguration default --type='merge' -p '{"spec":{"bpfEnabled":true}}'
+
+
+删除 calico-node Pods 强制重建：
+
+kubectl delete pod -n calico-system -l k8s-app=calico-node
+
+
+观察 kubectl get pod -n calico-system，felix readiness probe 应该很快通过。
+
+💡 总结：
+
+问题根源：集群原先 kube-proxy 用 IPVS 模式，直接切换 eBPF → 不兼容
+
+正确顺序：IPVS → iptables → eBPF正确顺序 ：IPVS → iptables → eBPF
+
+关键操作：切换 kube-proxy 模式 + 重新部署 calico-node pods
+```
+
+
+
+```
+# apiserver 被调度到同一节点导致 ippools status is false
+kubectl -n calico-system delete pod/calico-apiserver-xx
+kubectl -n calico-system delete pod/calico-apiserver-xx
+kubectl -n calico-system delete pod calico-kube-controllers-xx
+```
 
 
 
@@ -840,5 +875,81 @@ clusterDNS:
 # - 建议配置 PodSecurityAdmission/OPA/Gatekeeper 等策略控制。
 # ----------------------------------------------------------------------------
 
+```
+
+> 官方示例
+
+```yaml
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: InitConfiguration
+bootstrapTokens:
+  - token: "9a08jv.c0izixklcxtmnze7"
+    description: "kubeadm bootstrap token"
+    ttl: "24h"
+    usages:
+  - authentication
+  - signing
+    groups:
+  - system:bootstrappers:kubeadm:default-node-token
+
+nodeRegistration:
+  name: "k8s-node-1"
+  criSocket: "unix:///var/run/containerd/containerd.sock"
+  taints: null
+  imagePullPolicy: "IfNotPresent"
+  imagePullSerial: true
+
+localAPIEndpoint:
+  advertiseAddress: "192.168.88.181"
+  bindPort: 6443
+
+timeouts:
+  controlPlaneComponentHealthCheck: 4m0s
+  discovery: 5m0s
+  etcdAPICall: 2m0s
+  kubeletHealthCheck: 4m0s
+  kubernetesAPICall: 1m0s
+  tlsBootstrap: 5m0s
+  upgradeManifests: 5m0s
+---
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: ClusterConfiguration
+etcd:
+  local:
+    dataDir: "/var/lib/etcd"
+
+networking:
+  serviceSubnet: "10.96.0.0/16"
+  podSubnet: "10.10.0.0/24"
+  dnsDomain: "cluster.local"
+kubernetesVersion: "v1.33.6"
+controlPlaneEndpoint: "192.168.88.188:6443"
+apiServer:
+  extraArgs:
+    - name: authorization-mode
+      value: Node,RBAC
+
+controllerManager: {}
+scheduler: {}
+
+certificatesDir: "/etc/kubernetes/pki"
+caCertificateValidityPeriod: 87600h0m0s
+certificateValidityPeriod: 8760h0m0s
+imageRepository: "registry.aliyuncs.com/google_containers"
+clusterName: "test-cluster"
+encryptionAlgorithm: RSA-2048
+dns:
+  disabled: true  # disable CoreDNS
+proxy:
+  disabled: true   # disable kube-proxy
+
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+# kubelet specific options here
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: "none"
 ```
 
